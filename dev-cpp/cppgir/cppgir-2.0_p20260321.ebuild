@@ -30,6 +30,10 @@ BDEPEND="
 	test? ( dev-libs/glib )
 "
 
+PATCHES=(
+	"${FILESDIR}"/${PN}-2.0-clang-libcxx-build.patch
+)
+
 src_configure() {
 	local mycmakeargs=(
 		-DBUILD_DOC=$(usex doc)
