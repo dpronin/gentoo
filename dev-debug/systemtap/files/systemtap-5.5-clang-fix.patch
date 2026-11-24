@@ -1,0 +1,447 @@
+--- a/tapset-python.cxx	2026-05-01 22:23:07.000000000
++++ b/tapset-python.cxx	2026-11-23 20:53:32.811227160
+@@ -13,10 +13,8 @@
+ 
+ #include <cstring>
+ #include <string>
+-#include <ext/stdio_filebuf.h>
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ static const string TOK_PYTHON2("python2");
+ static const string TOK_PYTHON3("python3");
+@@ -433,14 +431,14 @@
+   // Read stderr from the child.
+   if (s.verbose > 2)
+     {
+-      stdio_filebuf<char> in(child_err, ios_base::in);
++      fd_streambuf in(child_err, ios_base::in);
+       clog << &in;
+       in.close();
+     }
+ 
+   // Read stdout from the child. Each line should contain 'MODULE
+   // FUNCTION [FLAG]'
+-  stdio_filebuf<char> buf(child_out, ios_base::in);
++  fd_streambuf buf(child_out, ios_base::in);
+   istream in(&buf);
+   string line;
+   while (getline(in, line))
+--- a/staputil.cxx	2026-05-01 22:23:07.000000000
++++ b/staputil.cxx	2026-11-23 20:52:46.636153388
+@@ -23,7 +23,6 @@
+ #include <string>
+ #include <fstream>
+ #include <cassert>
+-#include <ext/stdio_filebuf.h>
+ #include <algorithm>
+ #include <mutex>
+ #include <functional> 
+@@ -56,7 +55,90 @@
+ 
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
++
++
++fd_streambuf::fd_streambuf(int fd, std::ios_base::openmode mode, size_t bufsize)
++  : fd(fd), mode(mode), buf(bufsize > 0 ? bufsize : BUFSIZ)
++{
++  if (mode & std::ios_base::in)
++    setg(buf.data(), buf.data(), buf.data());
++  if (mode & std::ios_base::out)
++    setp(buf.data(), buf.data() + buf.size());
++}
++
++fd_streambuf::~fd_streambuf()
++{
++  close();
++}
++
++bool
++fd_streambuf::flush_out()
++{
++  if (fd < 0 || !(mode & std::ios_base::out))
++    return true;
++  char *p = pbase();
++  char *end = pptr();
++  while (p < end)
++    {
++      ssize_t n = ::write(fd, p, static_cast<size_t>(end - p));
++      if (n < 0)
++        {
++          if (errno == EINTR)
++            continue;
++          return false;
++        }
++      p += n;
++    }
++  setp(buf.data(), buf.data() + buf.size());
++  return true;
++}
++
++std::streambuf::int_type
++fd_streambuf::underflow()
++{
++  if (fd < 0 || !(mode & std::ios_base::in))
++    return traits_type::eof();
++  if (gptr() < egptr())
++    return traits_type::to_int_type(*gptr());
++  ssize_t n;
++  do
++    n = ::read(fd, buf.data(), buf.size());
++  while (n < 0 && errno == EINTR);
++  if (n <= 0)
++    return traits_type::eof();
++  setg(buf.data(), buf.data(), buf.data() + n);
++  return traits_type::to_int_type(*gptr());
++}
++
++std::streambuf::int_type
++fd_streambuf::overflow(int_type c)
++{
++  if (!flush_out())
++    return traits_type::eof();
++  if (!traits_type::eq_int_type(c, traits_type::eof()))
++    {
++      *pptr() = traits_type::to_char_type(c);
++      pbump(1);
++    }
++  return traits_type::not_eof(c);
++}
++
++int
++fd_streambuf::sync()
++{
++  return flush_out() ? 0 : -1;
++}
++
++int
++fd_streambuf::close()
++{
++  if (fd < 0)
++    return 0;
++  int rc = flush_out() ? 0 : -1;
++  int closed = ::close(fd);
++  fd = -1;
++  return (rc == 0 && closed == 0) ? 0 : -1;
++}
+ 
+ 
+ // Return current users home directory or die.
+@@ -1075,7 +1157,7 @@
+   if (child > 0)
+     {
+       // read everything from the child
+-      stdio_filebuf<char> in(child_fd, ios_base::in);
++      fd_streambuf in(child_fd, ios_base::in);
+       out << &in;
+       return stap_waitpid(verbose, child);
+     }
+@@ -1119,7 +1201,7 @@
+ 
+   // read everything from the child
+   close(pipefd[1]);
+-  stdio_filebuf<char> in(pipefd[0], ios_base::in);
++  fd_streambuf in(pipefd[0], ios_base::in);
+   out << &in;
+   return make_pair(false, stap_waitpid(verbose, child));
+ }
+--- a/tapset-netfilter.cxx	2026-05-01 22:23:07.000000000
++++ b/tapset-netfilter.cxx	2026-11-23 20:53:42.013241922
+@@ -16,7 +16,6 @@
+ #include <limits.h>
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ static const string TOK_NETFILTER("netfilter");
+ static const string TOK_HOOK("hook");
+--- a/dwflpp.cxx	2026-05-01 22:23:07.000000000
++++ b/dwflpp.cxx	2026-11-23 20:53:41.957241832
+@@ -66,7 +66,6 @@
+ 
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ 
+ static string TOK_KERNEL("kernel");
+--- a/tapset-debuginfod.cxx	2026-05-01 22:23:07.000000000
++++ b/tapset-debuginfod.cxx	2026-11-23 20:53:41.949241820
+@@ -19,7 +19,6 @@
+ #include <unistd.h>
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ static const string TOK_DEBUGINFOD("debuginfod");
+ static const string TOK_ARCHIVE("archive");
+--- a/tapsets.cxx	2026-05-01 22:23:07.000000000
++++ b/tapsets.cxx	2026-11-23 20:53:41.910241757
+@@ -66,7 +66,6 @@
+ }
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ // for elf.h where PPC64_LOCAL_ENTRY_OFFSET isn't defined
+ #ifndef PPC64_LOCAL_ENTRY_OFFSET
+--- a/bpf-base.cxx	2026-05-01 22:23:07.000000000
++++ b/bpf-base.cxx	2026-11-23 20:53:54.720262340
+@@ -402,7 +402,7 @@
+ init_bpf_helper_tables ()
+ {
+ #define __BPF_SET_FUNC_NAME(x) bpf_func_name_map[BPF_FUNC_ ## x] = #x
+-#define __BPF_SET_FUNC_ID(x) bpf_func_id_map[#x] = BPF_FUNC_ ## x
++#define __BPF_SET_FUNC_ID(x) bpf_func_id_map[#x] = (bpf_func_id)(BPF_FUNC_ ## x)
+   __BPF_FUNC_MAPPER(__BPF_SET_FUNC_NAME)
+   __STAPBPF_FUNC_MAPPER(__BPF_SET_FUNC_NAME)
+   __BPF_FUNC_MAPPER(__BPF_SET_FUNC_ID)
+@@ -957,11 +957,11 @@
+ }
+ 
+ void
+-program::mk_call(insn_inserter &ins, enum bpf_func_id id, unsigned nargs)
++program::mk_call(insn_inserter &ins, int id, unsigned nargs)
+ {
+   insn *i = ins.new_insn();
+   i->code = BPF_JMP | BPF_CALL;
+-  i->src1 = new_imm((int)id);
++  i->src1 = new_imm(id);
+   i->off = nargs;
+ }
+ 
+--- a/bpf-internal.h	2026-05-01 22:23:07.000000000
++++ b/bpf-internal.h	2026-11-23 20:53:54.706262317
+@@ -224,17 +224,19 @@
+   FN(text_str),                   \
+   FN(string_quoted),
+  
+-const bpf_func_id BPF_FUNC_map_get_next_key    = (bpf_func_id) -1;
+-const bpf_func_id BPF_FUNC_sprintf             = (bpf_func_id) -2;
+-const bpf_func_id BPF_FUNC_stapbpf_stat_get    = (bpf_func_id) -3;
+-const bpf_func_id BPF_FUNC_gettimeofday_ns     = (bpf_func_id) -4;
+-const bpf_func_id BPF_FUNC_get_target          = (bpf_func_id) -5;
+-const bpf_func_id BPF_FUNC_set_procfs_value    = (bpf_func_id) -6;
+-const bpf_func_id BPF_FUNC_append_procfs_value = (bpf_func_id) -7;
+-const bpf_func_id BPF_FUNC_get_procfs_value    = (bpf_func_id) -8;
+-const bpf_func_id BPF_FUNC_str_concat          = (bpf_func_id) -9;
+-const bpf_func_id BPF_FUNC_text_str            = (bpf_func_id) -10;
+-const bpf_func_id BPF_FUNC_string_quoted       = (bpf_func_id) -11;
++enum : int {
++  BPF_FUNC_map_get_next_key    = -1,
++  BPF_FUNC_sprintf             = -2,
++  BPF_FUNC_stapbpf_stat_get    = -3,
++  BPF_FUNC_gettimeofday_ns     = -4,
++  BPF_FUNC_get_target          = -5,
++  BPF_FUNC_set_procfs_value    = -6,
++  BPF_FUNC_append_procfs_value = -7,
++  BPF_FUNC_get_procfs_value    = -8,
++  BPF_FUNC_str_concat          = -9,
++  BPF_FUNC_text_str            = -10,
++  BPF_FUNC_string_quoted       = -11,
++};
+ 
+ struct insn
+ {
+@@ -403,7 +405,7 @@
+   void mk_binary(insn_inserter &ins, opcode op, value *d,
+ 		 value *s0, value *s1);
+   void mk_mov(insn_inserter &ins, value *dest, value *src);
+-  void mk_call(insn_inserter &ins, enum bpf_func_id id, unsigned nargs);
++  void mk_call(insn_inserter &ins, int id, unsigned nargs);
+   void mk_exit(insn_inserter &ins);
+   void mk_jmp(insn_inserter &ins, block *dest);
+   void mk_jcond(insn_inserter &ins, condition c, value *s0, value *s1,
+--- a/tapset-dynprobe.cxx	2026-05-01 22:23:07.000000000
++++ b/tapset-dynprobe.cxx	2026-11-23 20:53:42.038241963
+@@ -18,7 +18,6 @@
+ #include <string>
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ // ------------------------------------------------------------------------
+ // dynprobe derived 'probes': These don't really exist. The purpose of
+--- a/interactive.cxx	2026-05-01 22:23:07.000000000
++++ b/interactive.cxx	2026-11-23 20:55:31.719419328
+@@ -18,13 +18,12 @@
+ #include "stap-probe.h"
+ 
+ #include <cstdlib>
++#include <fstream>
+ #include <stack>
+ #include <sstream>
+ #include <iterator>
+-#include <ext/stdio_filebuf.h>
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ extern "C" {
+ #include <unistd.h>
+@@ -1749,7 +1748,7 @@
+       try
+         {
+           rc = passes_0_4 (s);
+-          stdio_filebuf<char> buf(ret.second, ios_base::out);
++          fd_streambuf buf(ret.second, ios_base::out);
+           ostream o(&buf);
+           if (rc == 0 && s.last_pass > 4)
+             {
+--- a/tapset-procfs.cxx	2026-05-01 22:23:07.000000000
++++ b/tapset-procfs.cxx	2026-11-23 20:53:41.999241900
+@@ -18,7 +18,6 @@
+ 
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ 
+ static const string TOK_PROCFS("procfs");
+--- a/tapset-timers.cxx	2026-05-01 22:23:07.000000000
++++ b/tapset-timers.cxx	2026-11-23 20:53:41.989241884
+@@ -18,7 +18,6 @@
+ 
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ 
+ static const string TOK_TIMER("timer");
+--- a/tapset-method.cxx	2026-05-01 22:23:07.000000000
++++ b/tapset-method.cxx	2026-11-23 20:53:41.895241733
+@@ -28,7 +28,6 @@
+ }
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ static const string TOK_CLASS ("class");
+ static const string TOK_METHOD ("method");
+--- a/staptree.cxx	2026-05-01 22:23:07.000000000
++++ b/staptree.cxx	2026-11-23 20:53:54.689262290
+@@ -20,7 +20,7 @@
+ #include <cstring>
+ #include <vector>
+ #include <algorithm>
+-#include <cstring>
++#include <iterator>
+ #include <atomic>
+ 
+ using namespace std;
+--- a/stapbpf/bpfinterp.cxx	2026-05-01 22:23:07.000000000
++++ b/stapbpf/bpfinterp.cxx	2026-11-23 20:55:31.731419347
+@@ -1039,7 +1039,7 @@
+ 	  continue;
+ 
+ 	case BPF_JMP | BPF_CALL:
+-	  switch (si)
++	  switch ((int32_t)si)
+ 	    {
+ 	    case BPF_FUNC_map_lookup_elem:
+ 	      {
+--- a/tapset-perfmon.cxx	2026-05-01 22:23:07.000000000
++++ b/tapset-perfmon.cxx	2026-11-23 20:53:41.975241861
+@@ -21,7 +21,6 @@
+ }
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ 
+ static const string TOK_PERF("perf");
+--- a/tapset-mark.cxx	2026-05-01 22:23:07.000000000
++++ b/tapset-mark.cxx	2026-11-23 20:53:41.968241850
+@@ -23,7 +23,6 @@
+ 
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ 
+ static const string TOK_KERNEL("kernel");
+--- a/staputil.h	2026-05-01 22:23:07.000000000
++++ b/staputil.h	2026-11-23 20:52:30.296127411
+@@ -16,6 +16,7 @@
+ #include <map>
+ #include <algorithm>
+ #include <limits>
++#include <streambuf>
+ 
+ extern "C" {
+ #if ENABLE_NLS
+@@ -424,6 +425,31 @@
+ void rtrim(std::string &s);
+ void trim(std::string &s);
+ 
++// Portable std::streambuf wrapping a POSIX file descriptor (replacing
++// libstdc++-specific __gnu_cxx::stdio_filebuf).
++class fd_streambuf : public std::streambuf
++{
++private:
++  int fd;
++  std::ios_base::openmode mode;
++  std::vector<char> buf;
++
++  bool flush_out();
++
++protected:
++  int_type underflow() cxx_override;
++  int_type overflow(int_type c = traits_type::eof()) cxx_override;
++  int sync() cxx_override;
++
++public:
++  fd_streambuf(int fd, std::ios_base::openmode mode, size_t bufsize = BUFSIZ);
++  ~fd_streambuf();
++  int close();
++
++  fd_streambuf(const fd_streambuf&) = delete;
++  fd_streambuf& operator=(const fd_streambuf&) = delete;
++};
++
+ bool get_distro_info(std::vector<std::string> &info);
+ #endif // UTIL_H
+ 
+--- a/language-server/stap-language-server.cxx	2026-05-01 22:23:07.000000000
++++ b/language-server/stap-language-server.cxx	2026-11-23 20:53:32.825227182
+@@ -12,7 +12,6 @@
+ #include "session.h"
+ #include "tapsets.h"
+ #include "staputil.h"
+-#include <ext/stdio_filebuf.h>
+ 
+ using namespace std;
+ 
+--- a/task_finder.cxx	2026-05-01 22:23:07.000000000
++++ b/task_finder.cxx	2026-11-23 20:53:41.902241744
+@@ -19,7 +19,6 @@
+ 
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ 
+ // ------------------------------------------------------------------------
+--- a/tapset-utrace.cxx	2026-05-01 22:23:07.000000000
++++ b/tapset-utrace.cxx	2026-11-23 20:53:41.981241871
+@@ -20,7 +20,6 @@
+ 
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ 
+ static const string TOK_PROCESS("process");
+--- a/tapset-been.cxx	2026-05-01 22:23:07.000000000
++++ b/tapset-been.cxx	2026-11-23 20:53:42.027241945
+@@ -18,7 +18,6 @@
+ 
+ 
+ using namespace std;
+-using namespace __gnu_cxx;
+ 
+ 
+ static const string TOK_BEGIN("begin");
