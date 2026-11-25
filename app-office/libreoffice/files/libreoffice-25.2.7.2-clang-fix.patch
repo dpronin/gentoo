@@ -1,0 +1,10 @@
+--- a/stoc/source/simpleregistry/simpleregistry.cxx
++++ b/stoc/source/simpleregistry/simpleregistry.cxx
+@@ -24,6 +24,7 @@
+ #include <optional>
+ #include <utility>
+ #include <vector>
++#include <iterator>
+ 
+ #include <com/sun/star/lang/XServiceInfo.hpp>
+ #include <com/sun/star/registry/InvalidRegistryException.hpp>

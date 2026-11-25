@@ -310,6 +310,11 @@ PATCHES=(
 
 	# bug #971474
 	"${FILESDIR}/${PN}-25.2.7.2-skia-clang22.patch"
+
+	"${FILESDIR}/${PN}-25.2.7.2-clang-fix.patch"
+	"${FILESDIR}/${PN}-25.2.7.2-clang-fix-2.patch"
+	"${FILESDIR}/${PN}-25.2.7.2-clang-fix-3.patch"
+	"${FILESDIR}/${PN}-25.2.7.2-clang-fix-4.patch"
 )
 
 _check_reqs() {

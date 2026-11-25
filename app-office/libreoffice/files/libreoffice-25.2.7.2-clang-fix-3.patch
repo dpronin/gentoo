@@ -1,0 +1,10 @@
+--- a/package/source/xstor/owriteablestream.cxx
++++ b/package/source/xstor/owriteablestream.cxx
+@@ -21,6 +21,7 @@
+ 
+ #include <cassert>
+ #include <memory>
++#include <iterator>
+ #include <sal/log.hxx>
+ 
+ #include <com/sun/star/packages/NoEncryptionException.hpp>
